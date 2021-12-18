@@ -7,22 +7,10 @@ namespace FoxProDatabaseExtractor
     {
         private const string ExtensionFoxProDB = ".dbc";
 
-        private static FoxProDatabaseConnector connector = null;
-
-        /// <summary>
-        /// Writes a line of text in the file.
-        /// </summary>
-        /// <param name="writer">The file stream open for writing.</param>
-        /// <param name="text">The line of text to write.</param>
-        private static void PrintLineToCSVFile(StreamWriter writer, string text)
-        {
-            writer.WriteLine(text);
-        }
-
         /// <summary>
         /// Iterates through all the FoxPro tables and saves each one of them in a CSV file.
         /// </summary>
-        private static void SaveFoxProTablesToCSVFiles(string targetCsvDirFullPath)
+        private static void SaveFoxProTablesToCSVFiles(FoxProDatabaseConnector connector, string targetCsvDirFullPath)
         {
             Console.WriteLine("Creating target directory...");
             Directory.CreateDirectory(targetCsvDirFullPath);
@@ -30,30 +18,30 @@ namespace FoxProDatabaseExtractor
 
             foreach (FoxProTable table in connector.FoxProTables)
             {
-                string fileName = String.Format("{0}.csv", table.Name);
+                string fileName = $"{table.Name}.csv";
                 string filePath = Path.Combine(targetCsvDirFullPath, fileName);
 
                 if(File.Exists(filePath))
                 {
-                    Console.WriteLine("File '{0}' exists. Deleting...", fileName);
+                    Console.WriteLine($"File '{fileName}' exists. Deleting...");
                     File.Delete(filePath);
                 }
 
-                Console.WriteLine("  Writing to file '{0}'...", fileName);
+                Console.WriteLine($"  Writing to file '{fileName}'...");
 
                 StreamWriter writer = File.CreateText(filePath);
 
-                PrintLineToCSVFile(writer, table.JoinedColumnTypes);
-                PrintLineToCSVFile(writer, table.JoinedColumnNames);
+                writer.WriteLine(table.JoinedColumnTypes);
+                writer.WriteLine(table.JoinedColumnNames);
                 
                 foreach (string joinedValues in table.JoinedValuesRows)
                 {
-                    PrintLineToCSVFile(writer, joinedValues);
+                    writer.WriteLine(joinedValues);
                 }
                 
                 writer.Close();
 
-                Console.WriteLine("Finished writing file {0}.", filePath);
+                Console.WriteLine($"Finished writing file {filePath}.");
             }
         }
 
@@ -63,7 +51,7 @@ namespace FoxProDatabaseExtractor
         private static void PrintHelpAndExit()
         {
             Console.WriteLine("Usage:");
-            Console.WriteLine("{0} database{1} TargetCsvDir/", AppDomain.CurrentDomain.FriendlyName, ExtensionFoxProDB);
+            Console.WriteLine($"{AppDomain.CurrentDomain.FriendlyName} database{ExtensionFoxProDB} TargetCsvDir/");
             Environment.Exit(-1);
         }
 
@@ -82,26 +70,24 @@ namespace FoxProDatabaseExtractor
 
             if (extension != ExtensionFoxProDB)
             {
-                Console.WriteLine("Unexpected file extension '{0}'. It should be '{1}'", extension, ExtensionFoxProDB);
+                Console.WriteLine($"Unexpected file extension '{extension}'. It should be '{ExtensionFoxProDB}'");
                 PrintHelpAndExit();
             }
             else if (!File.Exists(databaseFullPath))
             {
-                Console.WriteLine("Database path does not exist: {0}", databaseFullPath);
+                Console.WriteLine($"Database path does not exist: {databaseFullPath}");
                 PrintHelpAndExit();
             }
             else if (Directory.Exists(targetCsvDirFullPath))
             {
-                Console.WriteLine("Target directory already exists: {0}", targetCsvDirFullPath);
+                Console.WriteLine($"Target directory already exists: {targetCsvDirFullPath}");
                 PrintHelpAndExit();
             }
 
-            connector = new FoxProDatabaseConnector(databaseFullPath);
+            using FoxProDatabaseConnector connector = new(databaseFullPath);
 
-            SaveFoxProTablesToCSVFiles(targetCsvDirFullPath);
+            SaveFoxProTablesToCSVFiles(connector, targetCsvDirFullPath);
             
-            connector.EndConnection();
-
             Console.WriteLine("Finished! Press enter to exit.");
             Console.ReadLine();
         }

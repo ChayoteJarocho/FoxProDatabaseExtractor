@@ -8,91 +8,91 @@ namespace FoxProDatabaseExtractor
     /// <summary>
     /// Controls the connection to the FoxPro database and data extraction.
     /// </summary>
-    public class FoxProDatabaseConnector
+    public class FoxProDatabaseConnector : IDisposable
     {
-        public const string Separator = "|";
         public const string SelectCommandFormatString = @"SELECT {0} FROM {1}";
-
         private const string FoxProConnectionFormatString = @"Provider=VFPOLEDB.1;Data Source={0};";
 
-        public List<FoxProTable> FoxProTables;
+        // The connection to the FoxPro data source.
+        private readonly OleDbConnection _foxProConnection;
+
+        // The absolute path to the FoxPro database file.
+        private readonly string _databasePath;
+
+        // The FoxPro object with the tables schema.
+        // Each row in this object describes an actual user table.
+        private readonly DataTable _foxProDataTables;
+
+        // Contains all the user tables in this database.
+        private readonly List<FoxProTable> _foxProTables;
 
         /// <summary>
-        /// The connection to the FoxPro data source.
-        /// </summary>
-        private OleDbConnection FoxProConnection
-        {
-            get;
-            set;
-        }
-
-        /// <summary>
-        /// The absolute path to the FoxPro database file.
-        /// </summary>
-        private string DatabasePath
-        {
-            get;
-            set;
-        }
-
-        /// <summary>
-        /// The FoxPro schema table objects.
-        /// Each row in this object describes an actual user table.
-        /// </summary>
-        private DataTable FoxProDataTables
-        {
-            get;
-            set;
-        }
-
-        /// <summary>
-        /// Initializes a new <see cref="FoxProDatabaseConnector"/> instance.
+        /// Initializes a new <see cref="FoxProDatabaseConnector"/> instance and starts a connection to the database.
         /// </summary>
         /// <param name="databasePath">The absolute path to the FoxPro database file.</param>
         public FoxProDatabaseConnector(string databasePath)
         {
-            DatabasePath = databasePath;
+            _databasePath = databasePath;
 
-            StartConnection();
+            string foxProConnectionString = string.Format(FoxProConnectionFormatString, _databasePath);
+            _foxProConnection = new OleDbConnection(foxProConnectionString);
+
+            Console.WriteLine("Starting connection to database...");
+            _foxProConnection.Open();
+
+            _foxProDataTables = _foxProConnection.GetSchema(OleDbMetaDataCollectionNames.Tables);
+
+            _foxProTables = new List<FoxProTable>();
 
             try
             {
                 ExtractTables();
             }
-            catch(Exception e)
+            catch
             {
                 EndConnection();
-                throw new Exception("Unexpected error: ", e);
+                throw;
             }
+        }
+
+        /// <summary>
+        /// The list of user tables in the FoxPro database.
+        /// </summary>
+        public List<FoxProTable> FoxProTables => _foxProTables;
+
+        /// <summary>
+        /// Ends the connection to the database.
+        /// </summary>
+        /// <param name="disposing"></param>
+        protected virtual void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                EndConnection();
+            }
+        }
+
+        /// <summary>
+        /// Ends the connection to the database.
+        /// </summary>
+        public void Dispose()
+        {
+            Dispose(disposing: true);
+            GC.SuppressFinalize(this);
         }
 
         /// <summary>
         /// Closes and disposes the FoxPro database connection.
         /// </summary>
-        public void EndConnection()
+        private void EndConnection()
         {
-            if (FoxProConnection.State == ConnectionState.Open)
+            if (_foxProConnection.State == ConnectionState.Open)
             {
                 Console.WriteLine("Closing the database connection...");
 
-                FoxProConnection.Close();
-                FoxProConnection.Dispose();
+                _foxProConnection.Close();
+                _foxProConnection.Dispose();
             }
-        }
-
-        /// <summary>
-        /// Opens a connection to the FoxPro database.
-        /// </summary>
-        private void StartConnection()
-        {
-            Console.WriteLine("Starting connection to database...");
-
-            string foxProConnectionString = string.Format(FoxProConnectionFormatString, DatabasePath);
-
-            FoxProConnection = new OleDbConnection(foxProConnectionString);
-            FoxProConnection.Open();
-
-            FoxProDataTables = FoxProConnection.GetSchema(OleDbMetaDataCollectionNames.Tables);
         }
 
         /// <summary>
@@ -102,12 +102,10 @@ namespace FoxProDatabaseExtractor
         {
             Console.WriteLine("Extracting tables...");
 
-            FoxProTables = new List<FoxProTable>();
-
-            foreach (DataRow row in FoxProDataTables.Rows)
+            foreach (DataRow row in _foxProDataTables.Rows)
             {
-                FoxProTable foxProTable = new FoxProTable(FoxProConnection, row);
-                FoxProTables.Add(foxProTable);
+                FoxProTable foxProTable = new(_foxProConnection, row);
+                _foxProTables.Add(foxProTable);
             }
         }
     }
