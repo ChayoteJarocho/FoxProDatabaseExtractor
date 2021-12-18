@@ -10,77 +10,50 @@ namespace FoxProDatabaseExtractor
     /// </summary>
     public class FoxProTable
     {
-        /// <summary>
-        /// Generates the SELECT command to extract all the values from this table.
-        /// </summary>
-        private string SelectCommand
-        {
-            get
-            {
-                return string.Format(
-                  FoxProDatabaseConnector.SelectCommandFormatString,
-                  SelectColumnNames,
-                  Name);
-            }
-        }
+        private const char CsvSeparator = '|';
+
+        // A connection to the FoxPro datasource.
+        private readonly OleDbConnection _foxProConnection;
+
+        // A database command object to extract and fill DataSets.
+        private readonly OleDbDataAdapter _foxProAdapter;
+
+        // The FoxPro object with the columns schema.
+        // Each row in this object describes an actual user column.
+        private readonly DataTable _columnsTable;
+
+        // Contains all the user columns in this table.
+        private readonly List<FoxProColumn> _foxProColumns;
 
         /// <summary>
-        /// A connection to the FoxPro datasource.
+        /// Initializes a new <see cref="FoxProTable"/> instance.
         /// </summary>
-        private OleDbConnection FoxProConnection
+        /// <param name="connection">A valid FoxPro connection. Must have been already opened by the <see cref="FoxProDatabaseConnector"/>.</param>
+        /// <param name="row">The data row containing the current table's information.</param>
+        public FoxProTable(OleDbConnection connection, DataRow row)
         {
-            get;
-            set;
-        }
-        
-        /// <summary>
-        /// A database command object to extract and fill DataSets.
-        /// </summary>
-        private OleDbDataAdapter FoxProAdapter
-        {
-            get;
-            set;
-        }
+            _foxProConnection = connection;
 
-        /// <summary>
-        /// The columns of this FoxPro table.
-        /// </summary>
-        private DataTable ColumnsTable
-        {
-            get;
-            set;
-        }
+            Name = row["TABLE_NAME"].ToString();
 
-        /// <summary>
-        /// The values of this FoxPro table.
-        /// </summary>
-        private DataTable ValuesTable
-        {
-            get
-            {
-                Console.WriteLine(SelectCommand);
-
-                FoxProAdapter = new OleDbDataAdapter(SelectCommand, FoxProConnection);
-                DataTable table = new DataTable();
-                try
+            Console.WriteLine($"  Extracting table '{Name}'...");
+            _columnsTable = _foxProConnection.GetSchema(
+                OleDbMetaDataCollectionNames.Columns,
+                new string[]
                 {
-                    FoxProAdapter.Fill(table);
+                    null, // Catalog
+                    null, // Owner
+                    Name, // Table
+                    null  // Column
                 }
-                catch(Exception e)
-                {
-                    FoxProConnection.Close();
-                    FoxProConnection.Dispose();
-                    throw new Exception("ValuesTable exception: ", e);
-                }
+            );
 
-                return table;
-            }
+            _foxProColumns = new List<FoxProColumn>();
+            ExtractColumns();
+
+            // SelectCommand depends on generating the columns first.
+            _foxProAdapter = new OleDbDataAdapter(SelectCommand, _foxProConnection);
         }
-
-        /// <summary>
-        /// Contains all the columns from this FoxPro table.
-        /// </summary>
-        public List<FoxProColumn> FoxProColumns;
 
         /// <summary>
         /// Represents the table name.
@@ -92,48 +65,20 @@ namespace FoxProDatabaseExtractor
         }
 
         /// <summary>
-        /// Returns the columns of this FoxPro table as a comma-separated string, to be used in a SELECT command.
-        /// </summary>
-        public string SelectColumnNames
-        {
-            get
-            {
-                List<string> columnNames = new List<string>();
-
-                foreach (FoxProColumn column in FoxProColumns)
-                {
-                    string fixedName;
-                    switch (column.DataType)
-                    {
-                        case DataType.Numeric:
-                            fixedName = String.Format(" VAL(STR({0})) ", column.Name);
-                            break;
-                        default:
-                            fixedName = column.Name;
-                            break;
-                    }
-                    columnNames.Add(fixedName);
-                }
-
-                return String.Join(", ", columnNames);
-            }
-        }
-
-        /// <summary>
         /// Gets the list of column names of this FoxPro table in CSV style: in one line, with a special character as separator.
         /// </summary>
         public string JoinedColumnNames
         {
             get
             {
-                List<string> columnNames = new List<string>();
+                List<string> columnNames = new();
 
-                foreach (FoxProColumn column in FoxProColumns)
+                foreach (FoxProColumn column in _foxProColumns)
                 {
                     columnNames.Add(column.Name);
                 }
 
-                return String.Join(FoxProDatabaseConnector.Separator, columnNames);
+                return string.Join(CsvSeparator, columnNames);
             }
         }
 
@@ -144,14 +89,14 @@ namespace FoxProDatabaseExtractor
         {
             get
             {
-                List<string> columnTypes = new List<string>();
+                List<string> columnTypes = new();
 
-                foreach (FoxProColumn column in FoxProColumns)
+                foreach (FoxProColumn column in _foxProColumns)
                 {
                     columnTypes.Add(column.DataType.ToString());
                 }
 
-                return String.Join(FoxProDatabaseConnector.Separator, columnTypes);
+                return string.Join(CsvSeparator, columnTypes);
             }
         }
 
@@ -162,11 +107,9 @@ namespace FoxProDatabaseExtractor
         {
             get
             {
-                DataTable dataTable = ValuesTable;
-
-                foreach (DataRow row in dataTable.Rows)
+                foreach (DataRow row in ValuesTable.Rows)
                 {
-                    List<string> rowValues = new List<string>();
+                    List<string> rowValues = new();
 
                     foreach (object rawValue in row.ItemArray)
                     {
@@ -174,7 +117,7 @@ namespace FoxProDatabaseExtractor
                         rowValues.Add(safeValue);
                     }
 
-                    string joinedValues = String.Join(FoxProDatabaseConnector.Separator, rowValues.ToArray());
+                    string joinedValues = string.Join(CsvSeparator, rowValues.ToArray());
 
                     yield return joinedValues;
                 }
@@ -182,30 +125,56 @@ namespace FoxProDatabaseExtractor
         }
 
         /// <summary>
-        /// Initializes a new <see cref="FoxProTable"/> instance.
+        /// Generates the SELECT command to extract all the values from this table.
         /// </summary>
-        /// <param name="connection">A valid FoxPro connection. Must have been already opened by the <see cref="FoxProDatabaseConnector"/>.</param>
-        /// <param name="row">The data row containing the current table's information.</param>
-        public FoxProTable(OleDbConnection connection, DataRow row)
+        private string SelectCommand =>  string.Format(FoxProDatabaseConnector.SelectCommandFormatString, SelectColumnNames, Name);
+
+        /// <summary>
+        /// The values of this FoxPro table.
+        /// </summary>
+        private DataTable ValuesTable
         {
-            FoxProConnection = connection;
-            
-            Name = row["TABLE_NAME"].ToString();
+            get
+            {
+                Console.WriteLine(SelectCommand);
 
-            Console.WriteLine("  Extracting table '{0}'...", Name);
-
-            ColumnsTable = FoxProConnection.GetSchema(
-                OleDbMetaDataCollectionNames.Columns,
-                new string[]
+                DataTable table = new();
+                try
                 {
-                    null, // Catalog
-                    null, // Owner
-                    Name, // Table
-                    null  // Column
+                    _foxProAdapter.Fill(table);
                 }
-            );
-            
-            ExtractColumns();
+                catch
+                {
+                    _foxProConnection.Close();
+                    _foxProConnection.Dispose();
+                    throw;
+                }
+
+                return table;
+            }
+        }
+
+        /// <summary>
+        /// Returns the columns of this FoxPro table as a comma-separated string, to be used in a SELECT command.
+        /// </summary>
+        private string SelectColumnNames
+        {
+            get
+            {
+                List<string> columnNames = new();
+
+                foreach (FoxProColumn column in _foxProColumns)
+                {
+                    string fixedName = column.DataType switch
+                    {
+                        DataType.Numeric => $" VAL(STR({column.Name})) ",
+                        _ => column.Name,
+                    };
+                    columnNames.Add(fixedName);
+                }
+
+                return string.Join(',', columnNames);
+            }
         }
 
         /// <summary>
@@ -214,49 +183,40 @@ namespace FoxProDatabaseExtractor
         private void ExtractColumns()
         {
             Console.WriteLine("    Extracting columns...");
-
-            FoxProColumns = new List<FoxProColumn>();
-
-            foreach (DataRow row in ColumnsTable.Rows)
+            foreach (DataRow row in _columnsTable.Rows)
             {
                 string name = row["COLUMN_NAME"].ToString();
 
-                Console.WriteLine("      Extracting column '{0}'...", name);
+                Console.WriteLine($"      Extracting column '{name}'...");
 
                 DataType dataType = (DataType)Enum.Parse(typeof(DataType), row["DATA_TYPE"].ToString());
                 
-                if(Name == "cheques")
-                {
-                    Console.WriteLine("[{0}|{1}]", name, dataType);
-                }
+                FoxProColumn column = new(name, dataType);
 
-                FoxProColumn column = new FoxProColumn(name, dataType);
-
-                FoxProColumns.Add(column);
+                _foxProColumns.Add(column);
             }
         }
         
         /// <summary>
-        /// Evaluates the value of a cell in the row and simplifies some data.
+        /// Evaluates the value of a cell in the row and simplifies some data:
+        /// - The string gets trimmed.
+        /// - '\\' gets converted to '\\\\'.
+        /// - 'True' gets converted to '1'.
+        /// - 'False' gets converted to '0'.
         /// </summary>
         /// <param name="rawValue">The original value of the row cell.</param>
-        /// <returns></returns>
-        private string GetSafeValue(object rawValue)
+        /// <returns>The string with any necessary modifications.</returns>
+        private static string GetSafeValue(object rawValue)
         {
-            string safeValue = rawValue.ToString().Trim();
+            string safeValue = rawValue.ToString().Trim().Replace("\\", "\\\\");
 
-            safeValue.Replace("\\", "\\\\");
-
-            switch (safeValue)
+            if (safeValue == "True")
             {
-                case "True":
-                    safeValue = "1";
-                    break;
-                case "False":
-                    safeValue = "0";
-                    break;
-                default:
-                    break;
+                safeValue = "1";
+            }
+            else if(safeValue == "False")
+            {
+                safeValue = "0";
             }
 
             return safeValue;
