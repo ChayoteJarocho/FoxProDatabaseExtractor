@@ -12,8 +12,8 @@
         /// <param name="dataType">The data type of the column.</param>
         public FoxProColumn(string name, DataType dataType)
         {
-            this.Name = name;
-            this.DataType = dataType;
+            Name = name;
+            DataType = dataType;
         }
 
         /// <summary>
@@ -33,5 +33,11 @@
             get;
             private set;
         }
+
+        /// <summary>
+        /// Returns the column name.
+        /// </summary>
+        /// <returns>A string representing the column name.</returns>
+        public override string ToString() => Name;
     }
 }
